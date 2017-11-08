@@ -1,9 +1,11 @@
 package btcexport
 
 import (
-	"bytes"
 	"encoding/csv"
+	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 
@@ -26,39 +28,49 @@ var (
 	block91880TxHash = newHashFromStr("e3bf3d07d4b0375638d5f1db5255fe07ba2c4cb067cd81b84ee974b6585fb468")
 )
 
-// recordWriter writes records (vectors of strings) to a backing io.Writer. This
-// writer flushes after every write to ensure each row is written, whereas
-// csv.Writer buffers writes.
+// recordWriter writes records (vectors of strings) to a backing writer. The
+// backing writer is capped at an approximate size limit and once that size
+// limit is exceeded, the backing writer is closed and a new one is opened.
 type recordWriter struct {
-	buffer    bytes.Buffer
-	csvWriter *csv.Writer
-	writer    io.Writer
+	capacity       int
+	rotatingWriter *RotatingWriter
+	csvWriter      *csv.Writer
 }
 
-func newRecordWriter(writer io.Writer) *recordWriter {
-	rw := recordWriter{writer: writer}
-	rw.csvWriter = csv.NewWriter(&rw.buffer)
+// newRecordWriter constructs a new recordWriter that writes to the writer
+// parameter and maintains a byte capacity per backing writer.
+func newRecordWriter(writer *RotatingWriter, capacity int) *recordWriter {
+	rw := recordWriter{
+		capacity:       capacity,
+		rotatingWriter: writer,
+		csvWriter:      csv.NewWriter(writer),
+	}
 	return &rw
 }
 
 // Write encodes a record (vector of strings) as CSV and writes it to the
-// backing writer. Unlike csv.Writer, this function flushes to the backing
-// writer after every write to ensure the record is written.
+// backing writer. If the current backing writer has more data than the
+// recordWriter's capacity, a new one will be opened.
 func (rw *recordWriter) Write(record []string) error {
-	rw.buffer.Reset()
+	if rw.rotatingWriter.BytesWritten() > rw.capacity {
+		err := rw.Flush()
+		if err != nil {
+			return err
+		}
 
-	err := rw.csvWriter.Write(record)
-	if err != nil {
-		return nil
+		err = rw.rotatingWriter.RotateWriter()
+		if err != nil {
+			return err
+		}
 	}
 
+	return rw.csvWriter.Write(record)
+}
+
+// Flush flushes any unwritten data to the backing writer.
+func (rw *recordWriter) Flush() error {
 	rw.csvWriter.Flush()
-	if err = rw.csvWriter.Error(); err != nil {
-		return err
-	}
-
-	_, err = rw.writer.Write(rw.buffer.Bytes())
-	return err
+	return rw.csvWriter.Error()
 }
 
 type blockDescriptor struct {
@@ -140,32 +152,31 @@ func (be *BlockExporter) Start() error {
 	var blockFileNo, txFileNo, txInFileNo, txOutFileNo uint32
 
 	// TODO: Close writers if any of them fail to open.
-	blocksOutput, err := NewFileWriter(be.cfg.OutputDir, "blocks-%d.csv",
-		&blockFileNo, be.cfg.FileSizeLimit)
+	blocksOutput, err := newFileWriter(be.cfg.OutputDir, "blocks-%d.csv",
+		&blockFileNo)
 	if err != nil {
 		return err
 	}
-	txsOutput, err := NewFileWriter(be.cfg.OutputDir, "txs-%d.csv",
-		&txFileNo, be.cfg.FileSizeLimit)
+	txsOutput, err := newFileWriter(be.cfg.OutputDir, "txs-%d.csv", &txFileNo)
 	if err != nil {
 		return err
 	}
-	txInsOutput, err := NewFileWriter(be.cfg.OutputDir, "txins-%d.csv",
-		&txInFileNo, be.cfg.FileSizeLimit)
+	txInsOutput, err := newFileWriter(be.cfg.OutputDir, "txins-%d.csv",
+		&txInFileNo)
 	if err != nil {
 		return err
 	}
-	txOutsOutput, err := NewFileWriter(be.cfg.OutputDir, "txouts-%d.csv",
-		&txOutFileNo, be.cfg.FileSizeLimit)
+	txOutsOutput, err := newFileWriter(be.cfg.OutputDir, "txouts-%d.csv",
+		&txOutFileNo)
 	if err != nil {
 		return err
 	}
 
 	var (
-		blockWriter = newRecordWriter(blocksOutput)
-		txWriter    = newRecordWriter(txsOutput)
-		txInWriter  = newRecordWriter(txInsOutput)
-		txOutWriter = newRecordWriter(txOutsOutput)
+		blockWriter = newRecordWriter(blocksOutput, be.cfg.FileSizeLimit)
+		txWriter    = newRecordWriter(txsOutput, be.cfg.FileSizeLimit)
+		txInWriter  = newRecordWriter(txInsOutput, be.cfg.FileSizeLimit)
+		txOutWriter = newRecordWriter(txOutsOutput, be.cfg.FileSizeLimit)
 	)
 
 	// Create communication channels.
@@ -413,4 +424,16 @@ func newHashFromStr(hexStr string) *chainhash.Hash {
 		panic(err)
 	}
 	return hash
+}
+
+// newFileWriter creates a new RotatingWriter with a file output destination.
+// File names are generated sequentially using a shared incrementing index.
+func newFileWriter(dir string, filename string, indexPtr *uint32,
+) (*RotatingWriter, error) {
+
+	return NewRotatingWriter(func() (io.WriteCloser, error) {
+		index := atomic.AddUint32(indexPtr, 1)
+		filePath := filepath.Join(dir, fmt.Sprintf(filename, index))
+		return os.Create(filePath)
+	})
 }
