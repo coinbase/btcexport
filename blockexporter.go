@@ -1,6 +1,7 @@
 package btcexport
 
 import (
+	"compress/gzip"
 	"encoding/csv"
 	"fmt"
 	"io"
@@ -30,10 +31,12 @@ var (
 
 // recordWriter writes records (vectors of strings) to a backing writer. The
 // backing writer is capped at an approximate size limit and once that size
-// limit is exceeded, the backing writer is closed and a new one is opened.
+// limit is exceeded, the backing writer is closed and a new one is opened. The
+// data written is compressed using gzip.
 type recordWriter struct {
 	capacity       int
 	rotatingWriter *RotatingWriter
+	gzipWriter     *gzip.Writer
 	csvWriter      *csv.Writer
 }
 
@@ -43,8 +46,9 @@ func newRecordWriter(writer *RotatingWriter, capacity int) *recordWriter {
 	rw := recordWriter{
 		capacity:       capacity,
 		rotatingWriter: writer,
-		csvWriter:      csv.NewWriter(writer),
 	}
+	rw.gzipWriter = gzip.NewWriter(rw.rotatingWriter)
+	rw.csvWriter = csv.NewWriter(rw.gzipWriter)
 	return &rw
 }
 
@@ -53,7 +57,12 @@ func newRecordWriter(writer *RotatingWriter, capacity int) *recordWriter {
 // recordWriter's capacity, a new one will be opened.
 func (rw *recordWriter) Write(record []string) error {
 	if rw.rotatingWriter.BytesWritten() > rw.capacity {
-		err := rw.Flush()
+		rw.csvWriter.Flush()
+		if err := rw.csvWriter.Error(); err != nil {
+			return err
+		}
+
+		err := rw.gzipWriter.Close()
 		if err != nil {
 			return err
 		}
@@ -62,15 +71,27 @@ func (rw *recordWriter) Write(record []string) error {
 		if err != nil {
 			return err
 		}
+
+		rw.gzipWriter.Reset(rw.rotatingWriter)
 	}
 
 	return rw.csvWriter.Write(record)
 }
 
-// Flush flushes any unwritten data to the backing writer.
-func (rw *recordWriter) Flush() error {
-	rw.csvWriter.Flush()
-	return rw.csvWriter.Error()
+// Close flushes any unwritten data to the backing writer and closes all
+// writers.
+func (rw *recordWriter) Close() error {
+	err := rw.gzipWriter.Close()
+	if err != nil {
+		return err
+	}
+
+	err = rw.rotatingWriter.Close()
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 type blockDescriptor struct {
@@ -152,21 +173,22 @@ func (be *BlockExporter) Start() error {
 	var blockFileNo, txFileNo, txInFileNo, txOutFileNo uint32
 
 	// TODO: Close writers if any of them fail to open.
-	blocksOutput, err := newFileWriter(be.cfg.OutputDir, "blocks-%d.csv",
+	blocksOutput, err := newFileWriter(be.cfg.OutputDir, "blocks-%d.csv.gz",
 		&blockFileNo)
 	if err != nil {
 		return err
 	}
-	txsOutput, err := newFileWriter(be.cfg.OutputDir, "txs-%d.csv", &txFileNo)
+	txsOutput, err := newFileWriter(be.cfg.OutputDir, "txs-%d.csv.gz",
+		&txFileNo)
 	if err != nil {
 		return err
 	}
-	txInsOutput, err := newFileWriter(be.cfg.OutputDir, "txins-%d.csv",
+	txInsOutput, err := newFileWriter(be.cfg.OutputDir, "txins-%d.csv.gz",
 		&txInFileNo)
 	if err != nil {
 		return err
 	}
-	txOutsOutput, err := newFileWriter(be.cfg.OutputDir, "txouts-%d.csv",
+	txOutsOutput, err := newFileWriter(be.cfg.OutputDir, "txouts-%d.csv.gz",
 		&txOutFileNo)
 	if err != nil {
 		return err
@@ -221,10 +243,18 @@ func (be *BlockExporter) Start() error {
 		wg2.Wait()
 
 		// Close output files.
-		blocksOutput.Close()
-		txsOutput.Close()
-		txInsOutput.Close()
-		txOutsOutput.Close()
+		if err := blockWriter.Close(); err != nil {
+			be.errChan <- err
+		}
+		if err := txWriter.Close(); err != nil {
+			be.errChan <- err
+		}
+		if err := txInWriter.Close(); err != nil {
+			be.errChan <- err
+		}
+		if err := txOutWriter.Close(); err != nil {
+			be.errChan <- err
+		}
 
 		// Now signal the export process as done.
 		close(be.errChan)
