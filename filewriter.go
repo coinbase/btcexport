@@ -67,9 +67,13 @@ func (w *FileWriter) initNewFile() error {
 	}
 
 	w.file = file
-	w.writer = &cappedWriter{
-		capacity: w.capacity,
-		writer:   file,
+	if w.capacity == 0 {
+		w.writer = file
+	} else {
+		w.writer = &cappedWriter{
+			capacity: w.capacity,
+			writer:   file,
+		}
 	}
 	return nil
 }
