@@ -10,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -173,23 +175,23 @@ func (be *BlockExporter) Start() error {
 	var blockFileNo, txFileNo, txInFileNo, txOutFileNo uint32
 
 	// TODO: Close writers if any of them fail to open.
-	blocksOutput, err := newFileWriter(be.cfg.OutputDir, "blocks-%d.csv.gz",
-		&blockFileNo)
+	blocksOutput, err := newRotatingFileWriter(be.cfg.OutputDir,
+		"blocks-%d.csv.gz", &blockFileNo)
 	if err != nil {
 		return err
 	}
-	txsOutput, err := newFileWriter(be.cfg.OutputDir, "txs-%d.csv.gz",
-		&txFileNo)
+	txsOutput, err := newRotatingFileWriter(be.cfg.OutputDir,
+		"txs-%d.csv.gz", &txFileNo)
 	if err != nil {
 		return err
 	}
-	txInsOutput, err := newFileWriter(be.cfg.OutputDir, "txins-%d.csv.gz",
-		&txInFileNo)
+	txInsOutput, err := newRotatingFileWriter(be.cfg.OutputDir,
+		"txins-%d.csv.gz", &txInFileNo)
 	if err != nil {
 		return err
 	}
-	txOutsOutput, err := newFileWriter(be.cfg.OutputDir, "txouts-%d.csv.gz",
-		&txOutFileNo)
+	txOutsOutput, err := newRotatingFileWriter(be.cfg.OutputDir,
+		"txouts-%d.csv.gz", &txOutFileNo)
 	if err != nil {
 		return err
 	}
@@ -456,14 +458,34 @@ func newHashFromStr(hexStr string) *chainhash.Hash {
 	return hash
 }
 
-// newFileWriter creates a new RotatingWriter with a file output destination.
-// File names are generated sequentially using a shared incrementing index.
-func newFileWriter(dir string, filename string, indexPtr *uint32,
+// newRotatingFileWriter creates a new RotatingWriter with a file output
+// destination. File names are generated sequentially using a shared
+// incrementing index.
+func newRotatingFileWriter(dir string, filename string, indexPtr *uint32,
 ) (*RotatingWriter, error) {
 
 	return NewRotatingWriter(func() (io.WriteCloser, error) {
 		index := atomic.AddUint32(indexPtr, 1)
 		filePath := filepath.Join(dir, fmt.Sprintf(filename, index))
 		return os.Create(filePath)
+	})
+}
+
+// newRotatingS3Writer creates a new RotatingWriter with a S3 object output
+// destination. Object keys are generated sequentially using a shared
+// incrementing index.
+func newRotatingS3Writer(options *s3manager.UploadInput, indexPtr *uint32,
+) (*RotatingWriter, error) {
+
+	sess := session.Must(session.NewSession())
+	uploader := s3manager.NewUploader(sess)
+
+	return NewRotatingWriter(func() (io.WriteCloser, error) {
+		index := atomic.AddUint32(indexPtr, 1)
+		key := fmt.Sprintf(*options.Key, index)
+
+		optionsOverride := *options
+		optionsOverride.Key = &key
+		return newS3Writer(uploader, &optionsOverride)
 	})
 }
