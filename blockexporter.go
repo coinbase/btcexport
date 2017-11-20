@@ -174,7 +174,17 @@ func New(cfg Config) (*BlockExporter, error) {
 func (be *BlockExporter) Start() error {
 	var blockFileNo, txFileNo, txInFileNo, txOutFileNo uint32
 
-	// TODO: Close writers if any of them fail to open.
+	// This is defined so if any of the writers fail to open, we can close the
+	// rest before returning the error.
+	closeWriters := func(writers ...*RotatingWriter) {
+		for _, writer := range writers {
+			err := writer.Close()
+			if err != nil {
+				// TODO: Log the error
+			}
+		}
+	}
+
 	blocksOutput, err := newRotatingFileWriter(be.cfg.OutputDir,
 		"blocks-%d.csv.gz", &blockFileNo)
 	if err != nil {
@@ -183,16 +193,19 @@ func (be *BlockExporter) Start() error {
 	txsOutput, err := newRotatingFileWriter(be.cfg.OutputDir,
 		"txs-%d.csv.gz", &txFileNo)
 	if err != nil {
+		closeWriters(blocksOutput)
 		return err
 	}
 	txInsOutput, err := newRotatingFileWriter(be.cfg.OutputDir,
 		"txins-%d.csv.gz", &txInFileNo)
 	if err != nil {
+		closeWriters(blocksOutput, txsOutput)
 		return err
 	}
 	txOutsOutput, err := newRotatingFileWriter(be.cfg.OutputDir,
 		"txouts-%d.csv.gz", &txOutFileNo)
 	if err != nil {
+		closeWriters(blocksOutput, txsOutput, txInsOutput)
 		return err
 	}
 
