@@ -6,11 +6,14 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/database"
 	_ "github.com/btcsuite/btcd/database/ffldb"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
+	"github.com/coinbase/btcexport"
 	flags "github.com/jessevdk/go-flags"
 )
 
@@ -36,9 +39,13 @@ type config struct {
 	RegressionTest bool   `long:"regtest" description:"Use the regression test network"`
 	SimNet         bool   `long:"simnet" description:"Use the simulation test network"`
 	OutputDir      string `long:"output" description:"Directory to write output files to"`
+	S3Bucket       string `long:"s3-bucket" description:"S3 bucket to write output files to"`
+	S3Prefix       string `long:"s3-prefix" description:"Key prefix of S3 objects to upload"`
 	StartHeight    uint   `long:"start-height" description:"Optional beginning height of export range (default=0)"`
 	EndHeight      uint   `long:"end-height" description:"Ending height of of export range (default=tip-6)"`
 	Progress       int    `short:"p" long:"progress" description:"Show a progress message each time this number of seconds have passed -- Use 0 to disable progress announcements"`
+
+	writerFactory btcexport.WriterFactory
 }
 
 // validDbType returns whether or not dbType is a supported database type.
@@ -68,6 +75,28 @@ func netName(chainParams *chaincfg.Params) string {
 	default:
 		return chainParams.Name
 	}
+}
+
+// makeWriterFactory returns an appropriate WriterFactory determined by the
+// command line arguments.
+func makeWriterFactory(cfg *config) (btcexport.WriterFactory, error) {
+	switch {
+	case cfg.OutputDir != "":
+		if err := checkDirEmptyOrCreate(cfg.OutputDir); err != nil {
+			return nil, err
+		}
+		return btcexport.RotatingFileWriter(cfg.OutputDir), nil
+	case cfg.S3Bucket != "":
+		sess := session.Must(session.NewSession())
+		uploader := s3manager.NewUploader(sess)
+		options := s3manager.UploadInput{
+			Bucket: &cfg.S3Bucket,
+			Key:    &cfg.S3Prefix,
+		}
+		return btcexport.RotatingS3Writer(uploader, &options), nil
+	}
+
+	return nil, fmt.Errorf("No output destination specified")
 }
 
 // checkDirEmptyOrCreate ensures that the given file path either does not exist
@@ -159,8 +188,9 @@ func loadConfig() (*config, []string, error) {
 	// worry about changing names per network and such.
 	cfg.DataDir = filepath.Join(cfg.DataDir, netName(activeNetParams))
 
-	// Ensure the specified output directory is empty.
-	if err := checkDirEmptyOrCreate(cfg.OutputDir); err != nil {
+	// Use config to create writer factory.
+	cfg.writerFactory, err = makeWriterFactory(&cfg)
+	if err != nil {
 		err = fmt.Errorf("loadConfig: %v", err)
 		fmt.Fprintln(os.Stderr, err)
 		parser.WriteHelp(os.Stderr)

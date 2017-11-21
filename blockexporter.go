@@ -371,18 +371,21 @@ func (be *BlockExporter) writeRecords(wg *sync.WaitGroup, writer *recordWriter,
 	defer wg.Done()
 
 	for {
-		select {
-		case record, more := <-records:
-			if !more {
-				return
-			}
-			err := writer.Write(record)
-			if err != nil {
-				be.errChan <- err
-			}
-
-		case <-be.quit:
+		record, more := <-records
+		if !more {
 			return
+		}
+
+		// Do not write if shutting down.
+		select {
+		case <-be.quit:
+			continue
+		default:
+		}
+
+		err := writer.Write(record)
+		if err != nil {
+			be.errChan <- err
 		}
 	}
 }

@@ -78,7 +78,7 @@ func realMain() error {
 		DB:             db,
 		Chain:          chain,
 		NetParams:      activeNetParams,
-		OpenWriter:     btcexport.RotatingFileWriter(cfg.OutputDir),
+		OpenWriter:     cfg.writerFactory,
 		StartHeight:    cfg.StartHeight,
 		EndHeight:      cfg.EndHeight,
 		ConfirmedDepth: 6,
