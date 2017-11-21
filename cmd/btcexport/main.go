@@ -78,10 +78,10 @@ func realMain() error {
 		DB:             db,
 		Chain:          chain,
 		NetParams:      activeNetParams,
+		OpenWriter:     btcexport.RotatingFileWriter(cfg.OutputDir),
 		StartHeight:    cfg.StartHeight,
 		EndHeight:      cfg.EndHeight,
 		ConfirmedDepth: 6,
-		OutputDir:      cfg.OutputDir,
 		FileSizeLimit:  1024 * 1024,
 	})
 	if err != nil {

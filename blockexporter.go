@@ -3,15 +3,9 @@ package btcexport
 import (
 	"compress/gzip"
 	"encoding/csv"
-	"fmt"
-	"io"
-	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -107,6 +101,9 @@ type Config struct {
 	Chain     *blockchain.BlockChain
 	NetParams *chaincfg.Params
 
+	// OpenWriter creates a new rotating writer to the output destination.
+	OpenWriter WriterFactory
+
 	// StartHeight is the block height to export from.
 	StartHeight uint
 
@@ -119,9 +116,6 @@ type Config struct {
 	// chain. The confirmed depth is used to determine the ending height of the
 	// export if no EndHeight is set explicitly.
 	ConfirmedDepth uint
-
-	// OutputDir is the path to the directory to write output files to.
-	OutputDir string
 
 	// FileSizeLimit is the maximum size in bytes that an output file is allowed
 	// to be. If the record data exceeds the file size limit, it will be split
@@ -185,25 +179,21 @@ func (be *BlockExporter) Start() error {
 		}
 	}
 
-	blocksOutput, err := newRotatingFileWriter(be.cfg.OutputDir,
-		"blocks-%d.csv.gz", &blockFileNo)
+	blocksOutput, err := be.cfg.OpenWriter("blocks-%d.csv.gz", &blockFileNo)
 	if err != nil {
 		return err
 	}
-	txsOutput, err := newRotatingFileWriter(be.cfg.OutputDir,
-		"txs-%d.csv.gz", &txFileNo)
+	txsOutput, err := be.cfg.OpenWriter("txs-%d.csv.gz", &txFileNo)
 	if err != nil {
 		closeWriters(blocksOutput)
 		return err
 	}
-	txInsOutput, err := newRotatingFileWriter(be.cfg.OutputDir,
-		"txins-%d.csv.gz", &txInFileNo)
+	txInsOutput, err := be.cfg.OpenWriter("txins-%d.csv.gz", &txInFileNo)
 	if err != nil {
 		closeWriters(blocksOutput, txsOutput)
 		return err
 	}
-	txOutsOutput, err := newRotatingFileWriter(be.cfg.OutputDir,
-		"txouts-%d.csv.gz", &txOutFileNo)
+	txOutsOutput, err := be.cfg.OpenWriter("txouts-%d.csv.gz", &txOutFileNo)
 	if err != nil {
 		closeWriters(blocksOutput, txsOutput, txInsOutput)
 		return err
@@ -469,36 +459,4 @@ func newHashFromStr(hexStr string) *chainhash.Hash {
 		panic(err)
 	}
 	return hash
-}
-
-// newRotatingFileWriter creates a new RotatingWriter with a file output
-// destination. File names are generated sequentially using a shared
-// incrementing index.
-func newRotatingFileWriter(dir string, filename string, indexPtr *uint32,
-) (*RotatingWriter, error) {
-
-	return NewRotatingWriter(func() (io.WriteCloser, error) {
-		index := atomic.AddUint32(indexPtr, 1)
-		filePath := filepath.Join(dir, fmt.Sprintf(filename, index))
-		return os.Create(filePath)
-	})
-}
-
-// newRotatingS3Writer creates a new RotatingWriter with a S3 object output
-// destination. Object keys are generated sequentially using a shared
-// incrementing index.
-func newRotatingS3Writer(options *s3manager.UploadInput, indexPtr *uint32,
-) (*RotatingWriter, error) {
-
-	sess := session.Must(session.NewSession())
-	uploader := s3manager.NewUploader(sess)
-
-	return NewRotatingWriter(func() (io.WriteCloser, error) {
-		index := atomic.AddUint32(indexPtr, 1)
-		key := fmt.Sprintf(*options.Key, index)
-
-		optionsOverride := *options
-		optionsOverride.Key = &key
-		return newS3Writer(uploader, &optionsOverride)
-	})
 }

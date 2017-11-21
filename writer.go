@@ -1,7 +1,13 @@
 package btcexport
 
 import (
+	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"sync/atomic"
+
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 )
 
 // RotatingWriter is used to write to a backing writer that can be rotated
@@ -69,4 +75,39 @@ func (w *RotatingWriter) Close() error {
 	w.size = 0
 	w.writer = nil
 	return nil
+}
+
+// WriterFactory is a function that can be used to create new RotatingWriters
+// with unique file names.
+type WriterFactory func(filename string, indexPtr *uint32) (*RotatingWriter, error)
+
+// RotatingFileWriter returns a factory for creating new RotatingWriters with a
+// file output destination. File names are generated sequentially using a shared
+// incrementing index.
+func RotatingFileWriter(dir string) WriterFactory {
+	return func(filename string, indexPtr *uint32) (*RotatingWriter, error) {
+		return NewRotatingWriter(func() (io.WriteCloser, error) {
+			index := atomic.AddUint32(indexPtr, 1)
+			filePath := filepath.Join(dir, fmt.Sprintf(filename, index))
+			return os.Create(filePath)
+		})
+	}
+}
+
+// RotatingS3Writer returns a factory for creating new RotatingWriters with an
+// S3 object output destination. Object keys are generated sequentially using a
+// shared incrementing index.
+func RotatingS3Writer(uploader *s3manager.Uploader,
+	options *s3manager.UploadInput) WriterFactory {
+
+	return func(filename string, indexPtr *uint32) (*RotatingWriter, error) {
+		return NewRotatingWriter(func() (io.WriteCloser, error) {
+			index := atomic.AddUint32(indexPtr, 1)
+			key := *options.Key + fmt.Sprintf(filename, index)
+
+			optionsOverride := *options
+			optionsOverride.Key = &key
+			return newS3Writer(uploader, &optionsOverride)
+		})
+	}
 }
