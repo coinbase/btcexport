@@ -433,7 +433,8 @@ func (be *BlockExporter) processBlock(blockDesc *blockDescriptor,
 		}
 
 		for i, txIn := range tx.MsgTx().TxIn {
-			txInRecord, err := be.encoder.GenTxInRecord(tx.Hash(), i, txIn)
+			txInRecord, err := be.encoder.GenTxInRecord(
+				tx.Hash(), i, txIn, tx.Index() == 0)
 			if err != nil {
 				return err
 			}

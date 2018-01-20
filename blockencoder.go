@@ -1,6 +1,7 @@
 package btcexport
 
 import (
+	"encoding/hex"
 	"strconv"
 	"time"
 
@@ -14,14 +15,33 @@ import (
 // BlockEncoder is used to encode block, tx, input, and output data as rows in a
 // tabular data format.
 type BlockEncoder interface {
+	// BlockRecordHeader returns column headers for the blocks table.
 	BlockRecordHeader() []string
+
+	// TxRecordHeader returns column headers for the transactions table.
 	TxRecordHeader() []string
+
+	// TxInRecordHeader returns column headers for the transaction inputs table.
 	TxInRecordHeader() []string
+
+	// TxOutRecordHeader returns column headers for the transaction outputs
+	// table.
 	TxOutRecordHeader() []string
 
+	// GenBlockRecord returns a row in the blocks table derived from the given
+	// block.
 	GenBlockRecord(block *btcutil.Block) ([]string, error)
+
+	// GenTxRecord returns a row in the transactions table derived from the
+	// given transaction.
 	GenTxRecord(tx *btcutil.Tx, height uint) ([]string, error)
-	GenTxInRecord(txHash *chainhash.Hash, index int, txIn *wire.TxIn) ([]string, error)
+
+	// GetTxInRecord returns a row in the transaction inputs table derived from
+	// the given input.
+	GenTxInRecord(txHash *chainhash.Hash, index int, txIn *wire.TxIn, isCoinbase bool) ([]string, error)
+
+	// GetTxOutRecord returns a row in the transaction outputs table derived from
+	// the given output.
 	GenTxOutRecord(txHash *chainhash.Hash, index int, txOut *wire.TxOut) ([]string, error)
 }
 
@@ -88,7 +108,7 @@ func (be *blockEncoder) TxInRecordHeader() []string {
 
 // TODO: reedeemScript, witness data
 func (be *blockEncoder) GenTxInRecord(txHash *chainhash.Hash, index int,
-	txIn *wire.TxIn) ([]string, error) {
+	txIn *wire.TxIn, isCoinbase bool) ([]string, error) {
 
 	record := []string{
 		txHash.String(),
@@ -99,12 +119,16 @@ func (be *blockEncoder) GenTxInRecord(txHash *chainhash.Hash, index int,
 		"",
 	}
 
-	scriptSig, err := txscript.DisasmString(txIn.SignatureScript)
-	if err != nil {
-		return record, err
+	if isCoinbase {
+		record[4] = "COINBASE: " + hex.EncodeToString(txIn.SignatureScript)
+	} else {
+		scriptSig, err := txscript.DisasmString(txIn.SignatureScript)
+		if err != nil {
+			return record, err
+		}
+		record[4] = scriptSig
 	}
 
-	record[4] = scriptSig
 	return record, nil
 }
 
@@ -129,8 +153,10 @@ func (be *blockEncoder) GenTxOutRecord(txHash *chainhash.Hash, index int,
 
 	scriptClass, addresses, _, err := txscript.ExtractPkScriptAddrs(
 		txOut.PkScript, be.netParams)
+
+	// Some output scripts may be unparseable, so return without error.
 	if err != nil {
-		return record, err
+		return record, nil
 	}
 
 	record[3] = scriptClass.String()
