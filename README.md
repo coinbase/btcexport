@@ -1,6 +1,6 @@
 # btcexport
 
-TODO: Explain what this is.
+btcexport is a utility for parsing the blockchain as stored by a [btcd](https://github.com/btcsuite/btcd) full node and exporting it as CSV to be loaded into a columnar data store. The project supports multiple file destinations, currently the local filesystem and Amazon S3. To run btcexport, you must have a btcd node that is synced to the chain height you intend to export to. The node *must be off* while the export process is running.
 
 # Usage
 
@@ -9,7 +9,7 @@ Usage:
   btcexport [OPTIONS]
 
 Application Options:
-  -b, --datadir=      Location of the btcd data directory (default: /home/jimpo/.btcd/data)
+  -b, --datadir=      Location of the btcd data directory (default: /home/nobody/.btcd/data)
       --dbtype=       Database backend to use for the Block Chain (default: ffldb)
       --testnet       Use the test network
       --regtest       Use the regression test network
