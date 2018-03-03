@@ -162,7 +162,9 @@ func (be *blockEncoder) GenTxOutRecord(txHash *chainhash.Hash, index int,
 	record[3] = scriptClass.String()
 	switch scriptClass {
 	case txscript.PubKeyHashTy, txscript.WitnessV0PubKeyHashTy, txscript.PubKeyTy, txscript.ScriptHashTy, txscript.WitnessV0ScriptHashTy:
-		record[4] = addresses[0].String()
+		if len(addresses) == 1 {
+			record[4] = addresses[0].String()
+		}
 	}
 
 	scriptPubKey, err := txscript.DisasmString(txOut.PkScript)
