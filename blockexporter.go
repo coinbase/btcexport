@@ -77,6 +77,11 @@ func (rw *recordWriter) Write(record []string) error {
 // Close flushes any unwritten data to the backing writer and closes all
 // writers.
 func (rw *recordWriter) Close() error {
+	rw.csvWriter.Flush()
+	if err := rw.csvWriter.Error(); err != nil {
+		return err
+	}
+
 	err := rw.gzipWriter.Close()
 	if err != nil {
 		return err
