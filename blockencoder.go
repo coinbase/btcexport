@@ -120,13 +120,13 @@ func (be *blockEncoder) GenTxInRecord(txHash *chainhash.Hash, index int,
 	}
 
 	if isCoinbase {
-		record[4] = "COINBASE: " + hex.EncodeToString(txIn.SignatureScript)
+		record[5] = "COINBASE: " + hex.EncodeToString(txIn.SignatureScript)
 	} else {
 		scriptSig, err := txscript.DisasmString(txIn.SignatureScript)
 		if err != nil {
 			return record, err
 		}
-		record[4] = scriptSig
+		record[5] = scriptSig
 	}
 
 	return record, nil
