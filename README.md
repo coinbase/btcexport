@@ -1,6 +1,8 @@
 # btcexport
 
-btcexport is a utility for parsing the blockchain as stored by a [btcd](https://github.com/btcsuite/btcd) full node and exporting it as CSV to be loaded into a columnar data store. The project supports multiple file destinations, currently the local filesystem and Amazon S3. To run btcexport, you must have a btcd node that is synced to the chain height you intend to export to. The node *must be off* while the export process is running.
+btcexport is a utility for parsing the blockchain as stored by a [btcd](https://github.com/btcsuite/btcd) full node and exporting it as CSV to be loaded into a columnar data store. The project supports multiple file destinations, currently the local filesystem and Amazon S3.
+
+To run btcexport, you must have a btcd node that is synced to the chain height you intend to export to. The node *must be off* while the export process is running.
 
 # Usage
 
@@ -24,6 +26,35 @@ Application Options:
 Help Options:
   -h, --help          Show this help message
 ```
+
+## Examples
+
+Export entire mainnet chain to `output` directory on local filesystem.
+
+```bash
+$ btcexport --output=output
+```
+
+Export testnet blocks beginning at height 400,000 to Amazon S3.
+
+```bash
+$ btcexport \
+      --testnet \
+      --start-height=400000 \
+      --s3-bucket=my-btcexport
+      --s3-prefix mainnet
+```
+
+## Output format
+
+The program outputs CSV files compressed with gzip for four different logical tables:
+
+- `blocks-%d.csv.gz`
+- `txs-%d.csv.gz`
+- `txins-%d.csv.gz`
+- `txouts-%d.csv.gz`
+
+The rows of each logical table are split across multiple files. Each file is capped at *approximately* 1 MiB.
 
 # Installing
 
